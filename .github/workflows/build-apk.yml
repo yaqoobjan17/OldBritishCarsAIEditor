@@ -11,34 +11,190 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. Download repository
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2. Setup Java 17
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # 3. Restore Android project from ZIP
       - name: Restore Android project from ZIP
         run: |
           rm -rf app src build.gradle settings.gradle gradle.properties
+          rm -rf _project
+
           mkdir -p _project
+
           unzip -q OldBritishCarsAndroidV2_APKReady.zip -d _project
+
           ROOT=$(find _project -mindepth 1 -maxdepth 1 -type d | head -1)
+
+          echo "Project root: $ROOT"
+
           cp -R "$ROOT"/. .
+
+          echo "Checking Android project..."
+
           test -f settings.gradle
+          test -f build.gradle
           test -d app
 
+          echo "Android project restored successfully."
+
+      # 4. Fix MainActivity.java lambda problem
+      - name: Fix MainActivity Java code
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+
+          files = []
+
+          for root, dirs, filenames in os.walk("app"):
+              for filename in filenames:
+                  if filename == "MainActivity.java":
+                      files.append(os.path.join(root, filename))
+
+          if not files:
+              raise SystemExit("ERROR: MainActivity.java was not found.")
+
+          path = files[0]
+
+          print("Found MainActivity:")
+          print(path)
+
+          with open(path, "r", encoding="utf-8") as f:
+              code = f.read()
+
+          start = code.find("    void createProject(){")
+          end = code.find("    String demoPlan(", start)
+
+          if start == -1:
+              raise SystemExit("ERROR: createProject() method was not found.")
+
+          if end == -1:
+              raise SystemExit("ERROR: demoPlan() method was not found.")
+
+          new_method = r'''    void createProject(){
+          String s=script.getText().toString().trim();
+
+          if(s.isEmpty()){
+              Toast.makeText(this,"Please paste a script first.",Toast.LENGTH_SHORT).show();
+              return;
+          }
+
+          status.setText("Working… building the director plan.");
+          result.setText("");
+          create.setEnabled(false);
+
+          new Thread(()->{
+              try{
+                  boolean allow=prefs.getBoolean("paid",false);
+                  String key=prefs.getString("gemini","");
+                  String plan;
+
+                  if(!allow || key.isEmpty()){
+                      plan=demoPlan(s);
+                  }else{
+                      plan=geminiPlan(key,s);
+                  }
+
+                  String audio="";
+                  String ek=prefs.getString("eleven","");
+
+                  if(allow && !ek.isEmpty()){
+                      audio=elevenTTS(
+                          ek,
+                          prefs.getString(
+                              "voice",
+                              "JBFqnCBsd6RMkjVDRZzb"
+                          ),
+                          s
+                      );
+                  }
+
+                  String projectPath=saveProject(s,plan,audio);
+
+                  final String finalPlan=plan;
+                  final String finalAudio=audio;
+                  final String finalPath=projectPath;
+
+                  runOnUiThread(()->{
+
+                      if(finalAudio.isEmpty()){
+                          status.setText(
+                              "Project ready. No paid API was used."
+                          );
+                      }else{
+                          status.setText(
+                              "Project ready. Narration audio was generated."
+                          );
+                      }
+
+                      String displayResult =
+                          finalPlan
+                          +
+                          (
+                              finalAudio.isEmpty()
+                              ? ""
+                              : "\n\nNarration saved:\n"+finalAudio
+                          )
+                          +
+                          "\n\nProject saved:\n"+finalPath;
+
+                      result.setText(displayResult);
+
+                      create.setEnabled(true);
+                  });
+
+              }catch(Exception e){
+
+                  final String errorMessage =
+                      e.getMessage() == null
+                      ? e.toString()
+                      : e.getMessage();
+
+                  runOnUiThread(()->{
+                      status.setText("Error: "+errorMessage);
+                      create.setEnabled(true);
+                  });
+              }
+          }).start();
+      }
+'''
+
+          code = code[:start] + new_method + code[end:]
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(code)
+
+          print("MainActivity.java fixed successfully.")
+          PY
+
+      # 5. Setup Gradle 8.13
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
 
+      # 6. Show versions
+      - name: Check Build Environment
+        run: |
+          java -version
+          gradle --version
+
+      # 7. Build Debug APK
       - name: Build Debug APK
         run: |
           gradle assembleDebug --no-daemon
 
+      # 8. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
