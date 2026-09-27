@@ -1,0 +1,5 @@
+OLD BRITISH CARS — APK-FIRST BUILD
+
+This folder is ready for a cloud Android build.
+It is NOT an APK file yet.
+Use the included .github/workflows/build-apk.yml workflow to produce app-debug.apk without Android Studio.
